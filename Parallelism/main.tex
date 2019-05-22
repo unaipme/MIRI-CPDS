@@ -1,0 +1,570 @@
+\documentclass[10pt,landscape]{article}
+\usepackage{amssymb,amsmath,amsthm,amsfonts}
+\usepackage{multicol,multirow}
+\usepackage{tikz}
+\usepackage{pifont}
+\usepackage{calc}
+\usepackage{ifthen}
+\usepackage{minted}
+\usepackage[landscape]{geometry}
+\usepackage[colorlinks=true,citecolor=blue,linkcolor=blue]{hyperref}
+
+
+\ifthenelse{\lengthtest { \paperwidth = 11in}}
+    { \geometry{top=.5in,left=.5in,right=.5in,bottom=.5in} }
+	{\ifthenelse{ \lengthtest{ \paperwidth = 297mm}}
+		{\geometry{top=1cm,left=1cm,right=1cm,bottom=1cm} }
+		{\geometry{top=1cm,left=1cm,right=1cm,bottom=1cm} }
+	}
+\pagestyle{empty}
+\makeatletter
+\renewcommand{\section}{\@startsection{section}{1}{0mm}%
+                                {-1ex plus -.5ex minus -.2ex}%
+                                {0.5ex plus .2ex}%x
+                                {\normalfont\large\bfseries}}
+\renewcommand{\subsection}{\@startsection{subsection}{2}{0mm}%
+                                {-1explus -.5ex minus -.2ex}%
+                                {0.5ex plus .2ex}%
+                                {\normalfont\normalsize\bfseries}}
+\renewcommand{\subsubsection}{\@startsection{subsubsection}{3}{0mm}%
+                                {-1ex plus -.5ex minus -.2ex}%
+                                {1ex plus .2ex}%
+                                {\normalfont\small\bfseries}}
+\makeatother
+\setcounter{secnumdepth}{0}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt plus 0.5ex}
+% -----------------------------------------------------------------------
+
+\title{CPDS: OpenMP cheatseet}
+
+\begin{document}
+
+\footnotesize
+
+\begin{center}
+     \Large{\textbf{CPDS: OpenMP cheatsheet}} \\
+\end{center}
+\begin{multicols}{3}
+\setlength{\premulticols}{1pt}
+\setlength{\postmulticols}{1pt}
+\setlength{\multicolsep}{1pt}
+\setlength{\columnsep}{2pt}
+
+\section{Directives syntax}
+\par
+In C/C++, OpenMP is used through compiler directives. The syntax is ignored if the compiler does not know OpenMP.
+\begin{minted}{c}
+#pragma omp construct [clauses]
+\end{minted}
+\section{Memory model}
+\par
+OpenMP defines a relaxed memory model. Threads can see different values for the same variable (Variables can be shared or private to each thread). Memory consistency is only guaranteed at specific points.
+\section{Constructs}
+\subsection{The \texttt{parallel} construct}
+\begin{minted}{c}
+#pragma omp parallel [clauses]
+    // structured block...
+\end{minted}
+\par
+In that sense, directives work just like \texttt{if} statements. If the conditional block of the \texttt{if} is just one block, it can be written just like this:
+\begin{minted}{c}
+if (something) doIt();
+\end{minted}
+\par
+This syntax can be used for \textit{joining} different blocks even though they are not in the same line, as shown below. The \texttt{for} loop will only run if the condition \texttt{something} is true, even though we didn't enclose the conditional block between curly braces (\texttt{\{ \}}).
+\begin{minted}{c}
+if (something)
+for (;;) {
+    // do something...
+}
+\end{minted}
+\par
+The same goes for OpenMP directives. The following two pieces of code are equivalent.
+\begin{multicols}{2}
+\begin{minted}{c}
+#pragma omp parallel
+{
+    for (;;) {
+        // do something...
+    }
+}
+\end{minted}
+\begin{minted}{c}
+#pragma omp parallel
+for (;;) {
+    // do something...
+}
+//
+\end{minted}
+\end{multicols}
+\subsubsection{Number of threads}
+\par
+The \texttt{nthreads-var} ICV (internal variable) is used to determine the number of threads to be used for parallel regions. It's a list of positive integer values. For each occurrence of \texttt{parallel}, the first element is popped from the list.
+\par
+The value of the variable can be set with the environment variable \texttt{OMP\_NUM\_THREADS}, through the function \texttt{omp\_set\_num\_threads}, or by defining the directive \texttt{num\_threads}.
+\begin{minted}{c}
+unsigned int N = ...;
+omp_set_num_threads(N);
+#pragma omp parallel num_threads(N)
+\end{minted}
+\subsection{The \texttt{if} clause}
+\par
+It can be used to conditionally run regions parallelly. When the condition evaluates to false, the region is run on one only thread.
+\begin{minted}{c}
+int iterations = ...;
+#pragma omp parallel if (iterations > 10)
+\end{minted}
+\subsection{Example: amount of threads}
+\begin{minted}[breaklines]{c}
+void main() {
+    #pragma omp parallel
+    // ...
+    omp_set_num_threads(2);
+    #pragma omp parallel
+    //...
+    #pragma omp parallel num_threads(random() % 4 + 1) if(0)
+    //...
+}
+\end{minted}
+\par
+\textbf{How many threads are used in each parallel region?} The first region uses the default amount of threads. The second region will use 2 threads. The third region will not run parallely, as the \texttt{if} will always evaluate to false.
+\section{Data-sharing attributes}
+\subsection{Shared}
+\par
+When a variable is marked as \texttt{shared}, all threads use the same variable, this is, access the same location in memory. By default, variables are implicitly shared.
+\subsection{Private}
+\par
+When a variable is marked as \texttt{private}, it means that each thread has a different variable with an originally undefined value that can be accessed without any kind of synchronization.
+\subsection{Firstprivate}
+\par
+Whan a variable is marked as \texttt{firstprivate}, it means that each thread has a different variable initialized to the original value that can be accessed without any kind of synchronization.
+\subsection{Example: Data-sharing}
+\begin{minted}{c}
+int x = 1;
+#pragma omp parallel XXXXXX num_threads(2)
+{
+    x++;
+    printf("%d\n", x);
+}
+printf("%d\n", x);
+\end{minted}
+\textbf{What gets printed on screen if \texttt{XXXXXX} is \texttt{shared(x)}, \texttt{private(x)} or \texttt{firstprivate(x)}?} Note that the final \texttt{printf} falls out of the \texttt{parallel} construct.
+\par
+When \texttt{x} is shared, it is difficult to know. A race condition will occur. One of the threads will run \texttt{x++} before the other. So, the two first lines will be a 2 and a 3 (with undetermined order), followed by a 3.
+\par
+When \texttt{x} is private, the result is undefined, as the variables that the threads will be able to access are undefined.
+\par
+When \texttt{x} is firstprivate, it will print 2 twice, because each thread modifies a private variable initialized to 1. The original variable remains untouched, so it's just where it was initialized.
+\subsubsection{Try it yourself}
+\par
+Compile the source \texttt{data-sharing.c} with \texttt{make data-sharing} and run it with \texttt{./data-sharing}. Because of the compilation options, the uninitialized variables will be set to 0 by default. Thus, the example with private variables will print 1 three times.
+\subsection{Example: Computation of $\pi$}
+\par An approximation of $\pi$ can be calculated with the following sequential code.
+\begin{minted}[xleftmargin=20pt, linenos]{c}
+static long num_steps = 100000;
+double step;
+
+void main() {
+    int i;
+    double x, pi, sum = 0.0;
+    
+    step = 1.0 / (double) num_steps;
+    
+    for (i = 1; i <= num_steps; i++) {
+        x = (i - 0.5) * step;
+        sum = sum + 4.0 / (1.0 + x * x);
+    }
+    pi = step * sum;
+}
+\end{minted}
+\par
+Say the goal is to parallelize the code. The \texttt{for} loop can be parallelized. How would the \texttt{\#pragma} construct affect the data sharing? Variables \texttt{i}, \texttt{x}, and \texttt{sum}, are accessed and written in the loop, and, by default, these variables are shared. Not having a proper data sharing design would alter the result.
+\par
+As opposed to the other variables, \texttt{sum} is only read just before writing it by means of an addition. Additions are commutative ($3+2=2+3$) and associative ($(2+3)+4=2+(3+4)$), so \texttt{sum} can be shared. If \texttt{sum} was to be private, the initial value would be undefined, this is, the sum would not start from 0. If it was to be firstprivate, the results of each thread would need to be collected somehow after the fact.
+\par
+Meanwhile, different values of \texttt{i} and \texttt{x} can be read in crucial moments of the calculation. Specifically, the addition in line 12 may access a different value of \texttt{x} than the one calculated by the same thread a line before.
+\par
+The solution would be to make \texttt{i} and \texttt{x} private, as shown in the following code snippet:
+\begin{minted}{c}
+#pragma omp parallel private(i, x)
+for (i = 1; i <= num_steps; i++) {
+    x = (i - 0.5) * step;
+    sum = sum + 4.0 / (1.0 * x * x);
+}
+pi = step * sum;
+\end{minted}
+\par
+Recall that only the \texttt{for} loop will be parallelized. The last assignment (\texttt{pi = step * sum}) is run sequentially.
+\section{Some API calls}
+\begin{itemize}
+    \item \texttt{int omp\_get\_num\_threads()} returns the number of threads in the current team.
+    \item \texttt{int omp\_get\_thread\_num()} Returns the id of the thread in the current team. Goes from 0 to \texttt{omp\_get\_thread\_num() - 1}
+    \item 
+\end{itemize}
+\section{Thread synchronization}
+\par
+OpenMP follows a shared memory model. Threads communicate by sharing variables. Unintended sharing of data may cause race conditions. Threads need to synchronize to impose some ordering in their sequence of actions.
+\subsection{Thread barrier}
+\begin{minted}{c}
+#pragma omp barrier
+\end{minted}
+\par
+Threads cannot proceed past a barrier point until all the parallel threads reach the barrier. Some constructs, such as \texttt{parallel}, have an implicit barrier at the end.
+\begin{minted}[xleftmargin=20pt, linenos]{c}
+#pragma omp parallel
+{
+    foo();
+    #pragma omp barrier
+    bar();
+}
+\end{minted}
+\par
+The explicitly defined barrier in line 4 forces all threads to finish running \texttt{foo()} before running \texttt{bar()}. At the same time, the end of the parallel region at line 6 implicitly means that all threads must finish running \texttt{bar()} before the code keeps running sequentially.
+\subsection{Exclusive access: critical construct}
+\begin{minted}{c}
+#pragma omp critical [(name)]
+    // structured block
+\end{minted}
+\par
+Makes a parallel region accessible to only one thread at any given time, this is, mutual exclusion. Unless explicitly named, all critical regions are the same.
+\begin{minted}{c}
+#pragma omp parallel
+{
+    foo();
+    #pragma omp critical
+    bar();
+    #pragma omp critical
+    baz();
+}
+\end{minted}
+\par
+In the example above, there are two different critical regions. Nevertheless, as none of them are named, only one thread can run either one of the regions. The two of them will never be run at the same time. This can be fixed by naming either of the regions, as shown below.
+\begin{minted}{c}
+#pragma omp parallel
+{
+    foo();
+    #pragma omp critical part1
+    bar();
+    #pragma omp critical part2
+    baz();
+}
+\end{minted}
+\subsection{Exclusive access: atomic construct}
+\begin{minted}{c}
+#pragma omp atomic [ update | read | write ]
+    // expression
+\end{minted}
+The construct ensures that a specific storage location is accessed in a mutually exclusive way, avoiding the possibility of multiple, simultaneous reading and writing threads. It is usually more efficient than a \texttt{critical} construct. There are three types of atomic accesses:
+\begin{itemize}
+    \item Updates: \texttt{x++, x -= foo()}. An operation that reads from and writes in the same memory space. (These are those operations that can be represented as \texttt{+=}, \texttt{--}, \texttt{<<=} or \texttt{/=}, among others)
+    \item Reads: \texttt{value = *p}. In this case, the value of \texttt{p} is being directly read.
+    \item Writes: \texttt{*p = value}. In this case, the value of \texttt{p} is being directly written on.
+\end{itemize}
+\subsection{Reduction clause}
+\begin{minted}{c}
+#pragma omp parallel [...] reduction(operator:variable)
+    // block...
+\end{minted}
+\par
+Reduction is a pattern where all threads accumulate values into a single variable. Valid operators are \texttt{+}, \texttt{-}, \texttt{*}, \texttt{|} (bitwise OR), \texttt{||} (logical OR), \texttt{\&} (bitwise AND), \texttt{\&\&} (logical AND) and \texttt{\^} (bitwise XOR). The compiler implicitly creates a properly initialized private copy of the variable for each thread and, at the end of the region, it takes care of safely updating it with the partial solutions.
+\begin{minted}{c}
+#pragma omp parallel private(x, i, id) reduction(+:sum)
+{
+    id = omp_get_thread_num();
+    for (i = id + 1; i <= num_steps; i += NUM_THREADS) {
+        x = (i - 0.5) * step;
+        sum = sum + 4.0 / (1.0 + x * x);
+    }
+}
+pi = sum * step;
+\end{minted}
+\par
+In the example above, each thread will have a private copy of \texttt{sum}, probably initialized to 0. Threads will calculate the sum of the respective iterations they run, depending on their ID. As additions are commutative and associative, the results can be aggregated after the barrier without any loss of information.
+\subsection{Locks}
+\par
+OpenMP provides lock primitives for low-level synchronization. Locks work much like critical regions. They are acquired before entering a mutual exclusion region and must be released afterwards.
+\begin{minted}[xleftmargin=20pt, linenos]{c}
+#include <omp.h>
+void foo() {
+    omp_lock_t lock;
+    omp_init_lock(&lock);
+    #pragma omp parallel
+    {
+        omp_set_lock(&lock);
+        // mutual exclusion region
+        omp_unset_lock(&lock);
+    }
+    omp_destroy_lock(&lock);
+}
+\end{minted}
+\par
+Note, in the example above, that locks need initialization and destruction, which is taken care of with the functions on lines 4 and 11, respectively.
+\section{Memory consistency}
+\begin{minted}{c}
+#pragma omp flush (list)
+\end{minted}
+\par
+It enforces consistency between the temporary view and memory for those variables in the list. Synchronization constructs (implicit or explicit) have an associated flush operation.
+\section{Loop parallelism}
+\subsection{The worksharing concept}
+\par
+Worksharing constructs divide the execution of a code region among the members of a team. Threads cooperate to do some work. It is a better way to split work than thread IDs, and has a lower overhead than tasks, even though it's less flexible.
+\subsection{The \texttt{for} construct}
+\begin{minted}{c}
+#pragma omp for [clauses]
+    for (init-expr; test-expr; inc-expr)
+\end{minted}
+\par
+The iterations of the loops will be divided among the threads. Loop iterations must be independent and it must follow a shape that allows induction of amount of iterations. Valid types for inductions are integers, pointers and random access iterators (C++). This inducted variable is private.
+\begin{minted}{c}
+void main() {
+    int i, id;
+    double x, pi, sum;
+    
+    step = 1.0 / (double) num_steps;
+    #pragma omp parallel for private(x) reduction(+:sum)
+    for (i = 1; i <= num_steps; i++) {
+        x = (i - 0.5) * step;
+        sum  = sum + 4.0 / (1.0 + x * x);
+    }
+    pi = sum * step;
+}
+\end{minted}
+\par
+The \texttt{for} construct automatically detects \texttt{i} as the variable for iteration control. OpenMP makes it private and then distributes iterations among the threads. \texttt{x} still must be marked as private, race conditions can still occur. \texttt{sum} will have a different copy for each of the threads, initialized to 0. Thanks to the \texttt{reduct} clause, all the local results of \texttt{sum} per thread will be added after the synchronization.
+\subsection{The \texttt{schedule} clause}
+\par
+This clause determines which iterations are executed by each thread. If no clause is present, the implementation should take care of this. There are several options:
+\begin{itemize}
+    \item \texttt{static}. The iteration space is broken in chunks of size $\frac{N}{\text{num\_threads}}$. This is, the iterations are evenly divided across the threads. Chunks are assigned to threads in Round-Robin fashion.
+    \item \texttt{static,N} (interleaved). The iteration space is broken in chunks of size $N$. Then this chunks are scheduled to threads in Round-Robin fashion.
+\end{itemize}
+\par
+The overall characteristics of static scheduling are low overhead, (usually) good locality and the possibility of load imbalance problems.
+\begin{itemize}
+    \item \texttt{dynamic,N}. Threads dynamically grab chunks of $N$ iterations until all iterations have been executed. $N=1$ by default.
+    \item \texttt{guided,N}. The size of the chunks decreases as the threads grab iterations, but it is at least of size $N$, $N=1$ by default.
+\end{itemize}
+\par
+These dynamic schedules result in higher overhead, not very good locality (usually) but they can solve imbalance problems.
+\subsection{The \texttt{nowait} clause}
+\par
+The \texttt{nowait} clause removes the implicit \texttt{barrier} from the end of a parallel region. This allows to overlap the execution of non-dependent loops/tasks/worksharings.
+\begin{minted}{c}
+#pragma omp for nowait
+for (i = 0; i < n; i++)
+    v[i] = 0;
+#pragma omp for
+for (i = 0; i < n; i++)
+    a[i] = 0;
+\end{minted}
+\par
+In the example above, the work of the second loop is independent from the work of the first loop, hence there is no need for the threads to wait for synchronization after running the first loop. The \texttt{nowait} construct allows this.
+\begin{minted}{c}
+#pragma omp for schedule(static, 2) nowait
+for (i = 0; i < n; i++)
+    v[i] = 0;
+#pragma omp for schedule(static, 2)
+for (i = 0; i < n; i++)
+    a[i] = v[i] * v[i];
+\end{minted}
+\par
+In the example above, a static scheduling policy is defined. 2 different chunks will be created with the halves of the iterations of each \texttt{for} loop. So, even though the second loop is directly dependent on the results of the first loop, each of the threads will be dependent only of the elements calculated in the iterations run by themselves. The \texttt{nowait} construct allows the threads to continue running when they finish with the first loop.
+\subsection{The \texttt{collapse} clause}
+\par
+The \texttt{collapse} clause allows to distribute work from a set of $n$ nested loops. The loops must be perfectly nested. The nest must traverse a rectangular iteration space.
+\begin{minted}{c}
+#pragma omp for collapse(2)
+for (i = 0; i < N; i++) 
+    for (j = 0; j < M; j++)
+        foo(i, j);
+\end{minted}
+\par
+In the example above, the loops of $i$ and $j$ are folded and iterations distributed among all threads, and both variables are privatized.
+\subsection{The \texttt{single} construct}
+\begin{minted}{c}
+#pragma omp single [clauses]
+    // structured block
+\end{minted}
+\par
+The construct makes the structured block to be run in only one thread. The clauses can be \texttt{private}, \texttt{firstprivate} and \texttt{nowait}. There is an implicit \texttt{barrier} at the end.
+\section{Task parallelism}
+\subsection{Task parallelism model}
+\par
+Tasks are work units whose execution may be deferred, but they can also be executed immediately. Threads, separated in teams, cooperate to execute them.
+\subsection{Task creation}
+\par
+Parallel regions create tasks. One implicit task is created and assigned to each thread. Each thread that encounters a \texttt{task} construct packages the code and data and creates a new explicit task.
+\subsubsection{Explicit task creation}
+\begin{minted}{c}
+#pragma omp task [clauses]
+    // structured block
+\end{minted}
+\par
+Where some possible clauses are \texttt{shared}, \texttt{private}, \texttt{firstprivate}, \texttt{if(expr)}, \texttt{final(expr)} and \texttt{mergeable}.
+\begin{minted}{c}
+void traverse_list(List l) {
+    Element e;
+    for (e = l->first; e; e = e -> next) {
+        #pragma omp task
+        process(e); // e is firstprivate by default
+    }
+}
+\end{minted}
+\par
+The code above defines a task block, the \texttt{process} function. But tasks are useless if they are not defined within a parallel region. Let's complete the code.
+\begin{minted}{c}
+List l;
+
+#pragma omp parallel
+traverse_list(l);
+
+void traverse_list(List l) {
+    // ...
+}
+\end{minted}
+\par
+In the code above the \texttt{traverse\_list} function is going to be run by as many threads as defined. All of the threads will run all of the tasks, so the traversal of the list will be calculated by all threads. Execution is not actually parallelized.
+\begin{minted}{c}
+List l;
+
+#pragma omp parallel
+#pragma single
+traverse_list(l);
+
+void traverse_list(List l) {
+    // ...
+}
+\end{minted}
+\par
+With the addition of the construct \texttt{single}, only one of the threads will proper run the \texttt{traverse\_list} function. This thread will create the tasks. The rest of threads (and the first thread, once the task generation is complete) will run the tasks in parallel.
+\subsection{Default task data-sharing attributes}
+\par
+When no data clauses are specified, global variables are shared, variables declared within the scope of a task are private, and the rest are firstprivate, except when a \texttt{shared} attribute is inherited.
+\begin{minted}{c}
+int a;
+void foo() {
+    int b, c;
+    #pragma omp parallel shared(b)
+    #pragma omp parallel private(b)
+    {
+        int d;
+        #pragma omp task
+        {
+            int e;
+        }
+    }
+}
+\end{minted}
+\par
+In the code above, the variables are:
+\begin{itemize}
+    \item \texttt{a} is global, and so shared by default.
+    \item \texttt{b} is \textcolor{red}{firstprivate}.
+    \item \texttt{c} is shared because, in the context of the task, it is effectively global.
+    \item \texttt{d} is firstprivate, because it is declared within the parallel region and it its attribute is not explicitly defined.
+    \item \texttt{e} is private, because it is declared withing the scope of the task.
+\end{itemize}
+\subsection{Immediate task execution}
+\subsubsection{The \texttt{if} clause}
+\par
+When an \texttt{if} clause is present on a task construct, and its expression evaluates to \texttt{false}, an undeferred task is generated. The encountering thread must suspend the current task region, the execution of which cannot be resumed until the generated task is completed. This allows implementations to optimize task creation.
+\subsubsection{The \texttt{final} clause}
+\par
+If the expression of a \texttt{final} clause evaluates to \texttt{true}, then the generated task and its children will be final and included. Execution of included tasks is done immediately after the generating task. So, all tasks created within a \texttt{final} region will be run sequentially and immediately, and if more tasks are created, they will also be final and have the same final task generating capabilities.
+\par
+When a \texttt{mergeable} clause is present on a task construct, and the generated task is an included task, the implementation may generate a merged task instead (i.e. no task and context creation for it).
+\section{Task synchronization}
+\par
+There are two types of task barriers:
+\begin{itemize}
+    \item \texttt{taskwait}: Suspends the current task waiting on the completion of child tasks of the current task. This construct is stand-alone.
+    \item \texttt{taskgroup}: Suspends the current task at the end of a structured block waiting on completion of child tasks of the current task and their descendent tasks.
+\end{itemize}
+\subsection{\texttt{taskwait}}
+\begin{minted}{c}
+#pragma omp task {}     // T1
+#pragma omp task        // T2
+{
+    #pragma omp task {} // T3
+}
+#pragma omp task {}     // T4
+
+#pragma omp taskwait
+\end{minted}
+\par
+With the code above, only tasks 1, 2 and 4 are guaranteed to have finished after \texttt{taskwait}, as it only guarantees the completion of child tasks of the current task.
+\begin{minted}{c}
+int fib(int n) {
+    int i, j;
+    
+    if (n < 2) return n;
+    
+    #pragma omp task shared(i) final(n <= THOLD) mergeable
+    i = fib(n - 1);
+    #pragma omp task shared(j) final(n <= THOLD) mergeable
+    j = fib(n - 2);
+    
+    #pragma omp taskwait
+    return i + j;
+}
+\end{minted}
+\subsection{\texttt{taskgroup}}
+\begin{minted}{c}
+#pragma omp task {}         // T1
+#pragma omp taskgroup {
+    #pragma omp task        // T2
+    {
+        #pragma omp task {} // T3
+    }
+    #pragma omp task {}     // T4
+}
+\end{minted}
+\par
+With the code above, only tasks 2 to 4 are guaranteed to have finished after the \texttt{taskgroup} clause, as it guarantees the completion of all child tasks, and their child tasks recursively.
+\section{Data sharing inside tasks}
+\par
+In addition one can use \texttt{critical} and \texttt{atomic} to synchronize the access to shared data inside tasks.
+\begin{minted}{c}
+void process(Element e) {
+    // ...
+    #pragma omp atomic
+    solutions_found++;
+    // ...
+}
+\end{minted}
+\section{Task dependencies}
+\par
+Dependence between sibling tasks can be expressed as follows:
+\begin{minted}{c}
+#pragma omp task    [depend (in : var_list)]
+                    [depend (out : var_list)]
+                    [depend (inout : var_list)]
+\end{minted}
+\par
+The exact dependence between tasks is inferred from the dependence type and the items in the variable list. This list may include array sections.
+\begin{itemize}
+\item Tasks with the \texttt{in} dependence-type will be dependent of all previously generated sibling tasks that reference, at least, one of the items in the variable list in an \texttt{out} or \texttt{inout} dependence-type list.
+\item Tasks with the \texttt{out} or \texttt{inout} dependence-types will be dependent on all the previously generated tasks mentioning, at least, one of the items in the variable list.
+\end{itemize}
+\begin{minted}[breaklines]{c}
+#pragma omp parallel private(i, j)
+#pragma omp single
+{
+    for (i = 1; i < n; i++) {
+        for (j = 1; j < n; j++) {
+            #pragma omp task
+                    depend(in : block[i - 1], block[i][j - 1])
+                    depend(out : block[i][j]
+        foo(i, j);
+        }
+    }
+}
+\end{minted}
+\vfill
+\hrule
+~\\
+Unai Perez Mendizabal \textcopyright \href{https://github.com/unaipme}{https://github.com/unaipme}
+\end{multicols}
+\end{document}
