@@ -12,10 +12,10 @@
 
 \ifthenelse{\lengthtest { \paperwidth = 11in}}
     { \geometry{top=.5in,left=.5in,right=.5in,bottom=.5in} }
-	{\ifthenelse{ \lengthtest{ \paperwidth = 297mm}}
-		{\geometry{top=1cm,left=1cm,right=1cm,bottom=1cm} }
-		{\geometry{top=1cm,left=1cm,right=1cm,bottom=1cm} }
-	}
+    {\ifthenelse{ \lengthtest{ \paperwidth = 297mm}}
+        {\geometry{top=1cm,left=1cm,right=1cm,bottom=1cm} }
+        {\geometry{top=1cm,left=1cm,right=1cm,bottom=1cm} }
+    }
 \pagestyle{empty}
 \makeatletter
 \renewcommand{\section}{\@startsection{section}{1}{0mm}%
@@ -562,6 +562,379 @@ The exact dependence between tasks is inferred from the dependence type and the 
     }
 }
 \end{minted}
+\vfill
+\hrule
+~\\
+Unai Perez Mendizabal \textcopyright \href{https://github.com/unaipme}{https://github.com/unaipme}
+\end{multicols}
+\newpage\begin{center}
+ \Large{\textbf{CPDS: MPI cheatsheet}} \\
+\end{center}
+\begin{multicols}{3}
+\setlength{\premulticols}{1pt}
+\setlength{\postmulticols}{1pt}
+\setlength{\multicolsep}{1pt}
+\setlength{\columnsep}{2pt}
+\section{Basic concepts}
+\begin{itemize}
+    \item \textbf{Communicator}: It is the context for a communication operator. Messages are received within the context from where they were sent. Messages sent to different contexts do not interfere. The global context is \texttt{MPI\_COMM\_WORLD}
+    \item \textbf{Process group}: Set of processes that share a communication context.
+\end{itemize}
+\section{Main environmental functions}
+\subsection{\texttt{MPI\_INIT}}
+\begin{minted}{c}
+int MPI_Init(int * argc_ptr,     // in
+            char** argv_ptr[] ); // in
+\end{minted}
+\par
+It initializes the MPI environment. All MPI programs must call this routine once and only once before any other MPI routines.
+\subsection{\texttt{MPI\_COMM\_SIZE}}
+\par
+\begin{minted}{c}
+int MPI_Comm_size(MPI_Comm comm, // in
+                int* size );     // out
+\end{minted}
+\par
+It returns the number of processors (\texttt{size}) in the group associated to communicator \texttt{comm}.
+\subsection{\texttt{MPI\_COMM\_RANK}}
+\begin{minted}{c}
+int MPI_Comm_rank(MPI_Comm comm, // in
+                int* rank );     // out
+\end{minted}
+\par
+It returns the identifier of the local process in the group associated with communicator \texttt{comm}. The identifier (\texttt{rank}) of the process is within range [0, size-1].
+\subsection{\texttt{MPI\_FINALIZE}}
+\begin{minted}{c}
+int MPI_Finalize(void);
+\end{minted}
+\par
+It terminates all MPI processing. This routine MUST be the last MPI call, all pending communications involving a process must have completed before the process calls \texttt{MPI\_FINALIZE}.
+\subsection{\texttt{MPI\_ABORT}}
+\begin{minted}{c}
+int MPI_Abort(MPI_Comm comm, // in
+            int errorcode ); // in
+\end{minted}
+\par
+Forces all processes of an MPI job to terminate.
+\section{Barrier synchronization}
+\begin{minted}{c}
+int MPI_Barrier(MPI_Comm comm); // in
+\end{minted}
+\par
+Blocks all processes in communicator \texttt{comm}'s context until all processes have reached the point and called the barrier.
+\begin{minted}{c}
+#include "mpi.h"
+
+int rank;
+int nproc;
+
+int main(int argc, char* argv[] ) {
+    MPI_Init(&argc, &argv);
+    MPI_Comm_size(MPI_COMM_WORLD, &nproc);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    
+    // Ensure all processes arive here before timing
+    MPI_Barrier(MPI_COMM_WORLD);
+    // Something to do in local
+    
+    MPI_Finalize();
+}
+\end{minted}
+\section{Point-to-point communication}
+\subsection{Blocking operations}
+\par
+Return form the procedure indicates the user is allowed to reuse resources specified in the call. In other words, the execution will wait for the communication to complete.
+\subsubsection{\texttt{MPI\_SEND}}
+\begin{minted}{c}
+int MPI_Send(void* buf,             // in
+            int count,              // in
+            MPI_Datatype datatype,  // in
+            int destination,        // in
+            int tag,                // in
+            MPI_Comm comm );        // in
+\end{minted}
+\par
+Performs a blocking send operation. The message can be received by either \texttt{MPI\_RECV} (blocking call) or \texttt{MPI\_IRECV} (non-blocking call). The three last parameters (\texttt{destination}, \texttt{tag} and \texttt{comm}) are called the message envelope; it is the information used to distinguish messages and selectively receive them.
+\subsubsection{\texttt{MPI\_RECV}}
+\begin{minted}{c}
+int MPI_Recv(void* buf,             // out
+            int count,              // in
+            MPI_Datatype datatype,  // in
+            int source,             // in
+            int tag,                // in
+            MPI_Comm comm,          // in
+            MPI_Status* status );   // out
+\end{minted}
+\par
+Performs a blocking receive operation. The message received must be less than or equal to the length of the receive buffer \texttt{buf}. It can receive a message sent by either \texttt{MPI\_SEND} or \texttt{MPI\_ISEND}. The message envelope this time is \texttt{source}, \texttt{tag} and \texttt{comm}.
+\subsubsection{Example}
+\begin{minted}[breaklines]{c}
+#include "mpi.h"
+
+int rank, nproc;
+
+int main(int argc, char* argv []) {
+    int isbuf, irbuf;
+    MPI_Status status;
+    
+    MPI_Init(&argc, &argv);
+    MPI_Comm_size(MPI_COMM_WORLD, &nproc);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    
+    if (rank == 0) {
+        isbuf = 9;
+        MPI_Send(&isbuf, 1, MPI_INTEGER, 1, 1, MPI_COMM_WORLD);
+    } else if (rank == 1) {
+        MPI_Recv(&irbuf, 1, MPI_INTEGER, 0, 1, MPI_COMM_WORLD, &status);
+        printf("%d\n", irbuf);
+    }
+    MPI_Finalize();
+}
+\end{minted}
+\subsubsection{\texttt{MPI\_SENDRECV}}
+\begin{minted}{c}
+int MPI_Sendrecv(void *sendbuf,         // in
+                int sendcount,          // in
+                MPI_Datatype sendtype,  // in
+                int dest,               // in
+                int sendtag,            // in
+                void *recvbuf,          // out
+                int recvcount,          // out
+                MPI_Datatype recvtype,  // out
+                int source,             // out
+                int recvtag,            // out
+                MPI_Comm comm,          // out
+                MPI_Status *status );    // out
+\end{minted}
+\par
+Sends and receives a message in a blocking manner.
+\subsection{Non-blocking operations}
+\par
+The procedure may return before the operation completes, and before the user is allowed to reuse resources specified in the call. In other words, when the procedure is called, the execution continues, and it is up to the developer to check for the reception of the message.
+\subsubsection{\texttt{MPI\_ISEND}}
+\begin{minted}{c}
+int MPI_Isend(void* buf,            // in
+            int count,              // in
+            MPI_Datatype datatype,  // in
+            int dest,               // in
+            int tag,                // in
+            MPI_Comm comm,          // in
+            MPI_Request* request ); // out
+\end{minted}
+\par
+Performs a non-blocking send operation. \texttt{request} is an identifier for later enquiry with \texttt{MPI\_WAIT} or \texttt{MPI\_TEST}. The send buffer \texttt{buf} must not be modified until the request has been completed by \texttt{MPI\_WAIT} or \texttt{MPI\_TEST}. The message can be received by either \texttt{MPI\_RECV} or \texttt{MPI\_IRECV}.
+\subsubsection{\texttt{MPI\_IRECV}}
+\begin{minted}{c}
+int MPI_Irecv(void* buf,            // out
+            int count,              // in
+            MPI_Datatype datatype,  // in
+            int source,             // in
+            int tag,                // in
+            MPI_Comm comm,          // in
+            MPI_Request* request ); // out
+\end{minted}
+\par
+Performs a non-blocking receive operation. The receive buffer \texttt{buf} must not be accessed until the receive is completed by \texttt{MPI\_WAIT} or \texttt{MPI\_TEST}. The message received must be less than or equal to the length of the receive buffer \texttt{buf}. The function can receive a message sent by either \texttt{MPI\_SEND} or \texttt{MPI\_ISEND}.
+\subsubsection{\texttt{MPI\_WAIT}}
+\begin{minted}{c}
+int MPI_Wait(MPI_Request* request,  // inout 
+            MPI_Status* status );   // out
+\end{minted}
+\par
+Waits for a non-blocking operation to complete, with identifier stored in \texttt{request}. Information on the completed operation is found in \texttt{status}. If wildcards (\texttt{MPI\_ANY\_SOURCE}, \texttt{MPI\_ANY\_TAG}) were used by the recieve for either the source or tag, the actual source and tag can be retrieved from \texttt{status->MPI\_SOURCE} and \texttt{status->MPI\_TAG}.
+\subsubsection{\texttt{MPI\_TEST}}
+\begin{minted}{c}
+int MPI_Test(MPI_Request* request,  // inout
+            int* flag,              // out
+            MPI_Status* status );    // out
+\end{minted}
+\par
+Test for the completion of a non-blocking send or receive. \texttt{flag} equals \texttt{MPI\_SUCCESS} if MPI routine completed successfully.
+\subsubsection{\texttt{MPI\_GET\_COUNT}}
+\begin{minted}{c}
+int MPI_Get_count(MPI_Status status,    // in
+                MPI_Datatype datatype,  // in
+                int* count );           // out
+\end{minted}
+\par
+Returns the number of elements in a message (indicated by \texttt{status}). The \texttt{datatype} argument and the argument provided by the call that set the \texttt{status} variable should match.
+\subsubsection{\texttt{MPI\_PROBE}}
+\begin{minted}{c}
+int MPI_Probe(int source,           // in
+            int tag,                // in
+            MPI_Comm comm,          // in
+            MPI_Status *status );   // out
+\end{minted}
+\par
+Blocking call that returns only after a matching message is found. Wildcards can be used to wait for messages coming from any source (\texttt{MPI\_ANY\_SOURCE} or with any tag (\texttt{MPI\_ANY\_TAG}). There also is a non-blocking \texttt{MPI\_Iprobe}.
+\subsubsection{Example}
+\begin{minted}[breaklines]{c}
+#include "mpi.h"
+
+int main(int argc, char* argv[]) {
+    int rank, nproc;
+    int isbuf, irbuf, count;
+    MPI_Request request;
+    MPI_Status status;
+    
+    MPI_Init(&argc, &argv);
+    MPI_Comm_size(MPI_COMM_WORLD, &nproc);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    
+    if (rank == 0) {
+        isbuf = 9;
+        MPI_Isend(&isbuf, 1, MPI_INTEGER, 1, 1, MPI_COMM_WORLD, &request);
+    } else if (rank == 1) {
+        MPI_Irecv(&irbuf, 1, MPI_INTEGER, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &request);
+        // Other work to do
+        MPI_Get_count(status, MPI_INTEGER, &count);
+        printf("irbuf = %d, source = %d, tag = %d, count = %d\n", irbuf, status.MPI_SOURCE, status.MPI_TAG, count);
+    }
+    MPI_Finalize();
+}
+\end{minted}
+\section{MPI data types}
+\par
+\texttt{MPI\_Datatype} can be one of the following: \texttt{MPI\_CHAR}, \texttt{MPI\_SHORT}, \texttt{MPI\_INT}, \texttt{MPI\_LONG}, \texttt{MPI\_UNSIGNED\_CHAR}, \texttt{MPI\_UNSIGNED\_SHORT}, \texttt{MPI\_UNSIGNED}, \texttt{MPI\_UNSIGNED\_LONG}, \texttt{MPI\_FLOAT}, \texttt{MPI\_DOUBLE}, \texttt{MPI\_LONG\_DOUBLE}, \texttt{MPI\_BYTE}, \texttt{MPI\_PACKED}.
+\section{Collective communication}
+\par
+If all processes in a process group need to invoke the procedure.
+\subsection{\texttt{MPI\_BCAST}}
+\begin{minted}{c}
+int MPI_Bcast(void* buffer,         // inout
+            int count,              // in
+            MPI_Datatype datatype,  // in
+            int root,               // in
+            MPI_Comm comm );        // in
+\end{minted}
+\par
+It broadcasts a message from \texttt{root} to all processes in communicator \texttt{comm}. The type signature of \texttt{count} and \texttt{datatype} on any process must be equal to the type signature of \texttt{count} and \texttt{datatype} at the \texttt{root}.
+\subsection{\texttt{MPI\_REDUCE}}
+\begin{minted}{c}
+int MPI_Reduce(void* sendbuf,       // in
+            void recvbuf,           // out
+            int count,              // in
+            MPI_Datatype datatype,  // in
+            MPI_Op op,              // in
+            int root,               // in
+            MPI_Comm comm);         // in
+\end{minted}
+\par
+Applies a reduction operation to the vector \texttt{sendbuf} over the set of processes specified by communicator \texttt{comm} and places the result in \texttt{recvbuf} on \texttt{root}. Both the input and output buffers have the same number of elements with the same type.
+\par
+Users may define their own operations or use the predefined operations provided by MPI: \texttt{MPI\_\{SUM, PROD, MAX, MIN, MAXLOC, MINLOC, LAND, LOR, LXOR, BAND, BOR, BXOR\}}.
+\subsection{Broadcast and reduce: Example}
+\begin{minted}[breaklines]{c}
+void main(int argc, char* argv[]) {
+    int i, rank, nproc, num_steps;
+    double x, pi, step, sum = 0.0;
+    
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &nproc);
+    
+    if (rank == 0) {
+        scanf("%d", &num_steps);
+    }
+    MPI_Bcast(&num_steps, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    step = 1.0 / (double) num_steps;
+    my_steps = num_steps / nproc;
+    
+    for (i = rank * my_steps; i < (rank + 1) * my_steps; i++) {
+        x = (i + 0.5) * step;
+        sum += 4.0 / (1.0 + x * x);
+    }
+    sum *= step;
+    MPI_Reduce(&sum, &pi, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Finalize();
+}
+\end{minted}
+\par
+In the code above, only the thread with rank 0 will allow for user input. This user input is the number of steps (iterations). Then, all threads will run the \texttt{MPI\_Bcast} function, with thread ranked 0 as the root. This means that thread of rank 0 will send all the threads its value of the variable \texttt{num\_steps} and those will store it in their \texttt{num\_steps} variable.
+\par
+The \texttt{for} loop will let each thread to run a certain amount of iterations. Each thread will have its share of \texttt{sum}. With function \texttt{MPI\_Reduce}, all threads will send their \texttt{sum} values to the root (again, thread with rank 0) and, using operation \texttt{MPI\_SUM}, which corresponds to a sum, it will aggregate into one variable.
+\subsection{\texttt{MPI\_SCATTER}}
+\begin{minted}{c}
+int MPI_Scatter(void* sendbuf,          // in
+                int sendcount,          // in
+                MPI_Datatype sendtype,  // in
+                void* recvbuf,          // out
+                int recvcount,          // in
+                MPI_Datatype recvtype,  // in
+                int root,               // in
+                MPI_Comm comm );        // in
+\end{minted}
+\par
+It distributes individual messages from \texttt{root} to each process in the communicator. It represents the inverse operation to \texttt{MPI\_GATHER}.
+\section{\texttt{MPI\_GATHER}}
+\begin{minted}{c}
+int MPI_Gather(void* sendbuf,       // in
+            int sendcount,          // in
+            MPI_Datatype sendtype,  // in
+            void* recvbuf,          // out
+            int recvcount,          // in
+            MPI_Datatype recvtype,  // in
+            int root,               // in
+            MPI_Comm comm );        // in
+\end{minted}
+\par
+Collects individual messages from each process in the communicator to the \texttt{root} process and stores them in rank order.
+\subsection{Scatter and gather: Example}
+\begin{minted}[breaklines]{c}
+int gsize, localbuf[100];
+int root = 0, rank, nproc, *rootbuf;
+// ...
+MPI_Comm_size(MPI_COMM_WORLD, &nproc);
+MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+if (rank == root)
+    rootbuf = (int *) malloc(nproc * 100 * sizeof(int));
+
+// matrix is initialized in root    
+MPI_Scatter(rootbuf, 100, MPI_INT, localbuf, 100, MPI_INT, root, comm);
+// do work with data
+MPI_Gather(localbuf, 100, MPI_INT, rootbuf, 100, MPI_INT, root, comm);
+// results back in root
+\end{minted}
+\par
+In the example above, the root thread will have (supposedly) initialized a matrix, with 100 elements for each thread. These elements, stored in the \texttt{rootbuf}, are distributed, hundred by hundred, into the other threads' \texttt{localbuf} variable. After some work on the data, the content of variable \texttt{localbuf} of all threads is stored back into the root thread's \texttt{rootbuf} variable.
+\subsection{\texttt{MPI\_ALLGATHER}}
+\begin{minted}{c}
+int MPI_Allgather(void* sendbuf,        // in
+                int sendcount,          // in
+                MPI_Datatype sendtype,  // in
+                void* recvbuf,          // out
+                int recvcount,          // in
+                MPI_Datatype recvtype,  // in
+                MPI_Comm comm );        // in
+\end{minted}
+\par
+Does the same as \texttt{MPI\_Gather}, but all threads receive the resulting message.
+\subsection{Other variations}
+\subsubsection{\texttt{MPI\_SCATTERV}}
+\par
+Works the same way as \texttt{MPI\_SCATTER}, but permits the user to define how many elements will go to each thread, through an integer array with size \texttt{nproc}.
+\subsubsection{\texttt{MPI\_GATHERV}}
+\par
+The exact opposite of \texttt{MPI\_SCATTERV}, all results are scattered into the root, but it allows to set how many of the elements will be received from each thread.
+\subsubsection{\texttt{MPI\_ALLGATHERV}}
+\par
+Permits to define how many elements will be gathered from each thread, as does \texttt{MPI\_GATHERV}, but all threads will receive the resulting message.
+\subsubsection{\texttt{MPI\_ALLTOALL}}
+\begin{minted}{c}
+int MPI_Alltoall(void* sendbuf,         // in
+                int sendcount,          // in
+                MPI_Datatype sendtype,  // in
+                void* recvbuf,          // out
+                int recvcount,          // in
+                MPI_Datatype recvtype,  // in
+                MPI_Comm comm );        // in
+\end{minted}
+\par
+Sends a distinct message from each process to every other process. The \texttt{j}th block of data sent from process \texttt{i} is received by process \texttt{j} and placed in the \texttt{i}th block of the buffer \texttt{recvbuf}.
+\subsubsection{\texttt{MPI\_ALLTOALLV}}
+\par
+As does \texttt{MPI\_Alltoall}, sends a message from each process to all processes, but allows to specify the amount of elements to send to each thread.
 \vfill
 \hrule
 ~\\
