@@ -1,21 +1,21 @@
 \documentclass[10pt,landscape]{article}
 \usepackage{amssymb,amsmath,amsthm,amsfonts}
 \usepackage{multicol,multirow}
-\usepackage{tikz}
 \usepackage{pifont}
 \usepackage{calc}
 \usepackage{ifthen}
 \usepackage{minted}
 \usepackage[landscape]{geometry}
 \usepackage[colorlinks=true,citecolor=blue,linkcolor=blue]{hyperref}
+\usepackage{graphicx}
 
 
 \ifthenelse{\lengthtest { \paperwidth = 11in}}
     { \geometry{top=.5in,left=.5in,right=.5in,bottom=.5in} }
-    {\ifthenelse{ \lengthtest{ \paperwidth = 297mm}}
-        {\geometry{top=1cm,left=1cm,right=1cm,bottom=1cm} }
-        {\geometry{top=1cm,left=1cm,right=1cm,bottom=1cm} }
-    }
+	{\ifthenelse{ \lengthtest{ \paperwidth = 297mm}}
+		{\geometry{top=1cm,left=1cm,right=1cm,bottom=1cm} }
+		{\geometry{top=1cm,left=1cm,right=1cm,bottom=1cm} }
+	}
 \pagestyle{empty}
 \makeatletter
 \renewcommand{\section}{\@startsection{section}{1}{0mm}%
@@ -935,6 +935,306 @@ Sends a distinct message from each process to every other process. The \texttt{j
 \subsubsection{\texttt{MPI\_ALLTOALLV}}
 \par
 As does \texttt{MPI\_Alltoall}, sends a message from each process to all processes, but allows to specify the amount of elements to send to each thread.
+\vfill
+\hrule
+~\\
+Unai Perez Mendizabal \textcopyright \href{https://github.com/unaipme}{https://github.com/unaipme}
+\end{multicols}
+\newpage\begin{center}
+ \Large{\textbf{CPDS: CUDA cheatsheet}} \\
+\end{center}
+\begin{multicols}{3}
+\setlength{\premulticols}{1pt}
+\setlength{\postmulticols}{1pt}
+\setlength{\multicolsep}{1pt}
+\setlength{\columnsep}{2pt}
+\section{Devices, kernel definition and offloading}
+\subsection{Device management}
+\par
+The application can query and select the GPUs.
+\begin{itemize}
+    \item \texttt{cudaGetDeviceCount(int *count)}
+    \item \texttt{cudaSetDevice(int device)}
+    \item \texttt{cudaGetDeviceProperties(cudaDeviceProp *prop, int device)}
+    \item \texttt{cudaGetDevice(int *device)}
+\end{itemize}
+\subsection{Offloading kernel execution}
+\par
+A kernel is a highly parallel function that runs on the device and is called from host. It is defined using the keyword \texttt{\_\_global\_\_}.
+\begin{minted}{c}
+__global__ void helloworld(void) {
+}
+\end{minted}
+\par
+The code shown below offloads the kernel on GPU device, this is, relegates the execution of the kernel function to the said device.
+\begin{minted}{c}
+helloworld<<<1,1>>>();
+\end{minted}
+\par
+The kernel launch is asynchronous, the host does not wait for the termination of the execution. However, the host may need to wait before continuing execution. Function \texttt{cudaThreadSynchronize()}\footnote{Deprecated, to be replaced by \texttt{cudaDeviceSynchronize()}} blocks the CPU until all CUDA kernels have completed.
+\begin{minted}{c}
+__global__ void helloworld(void) {
+}
+
+int main(void) {
+    helloworld<<<1,1>>>();
+    cudaThreadSynchronize();
+    printf("Hello, world!\n");
+    return 0;
+}
+\end{minted}
+\subsubsection{Offloading to multi-GPU nodes}
+\par
+Any host thread can access all GPUs in the node (if more than one available) using the \texttt{cudaSetDevice} call.
+\begin{minted}{c}
+int main(void) {
+    int numDevs;
+    cudaGetDeviceCount(&numDevs);
+    
+    for (int d = 0; d < numDevs; d++) {
+        cudaSetDevice(d);
+        helloworld<<<1,1>>>();
+    }
+    for (int d = 0; d < numDevs; d++) {
+        cudaSetDevice(d);
+        cudaThreadSynchronize();
+    }
+    return 0;
+}
+\end{minted}
+\section{Blocks threads and indexing}
+\subsection{Parallel kernel}
+\par
+Kernel replication to use multiple \textbf{streaming multiprocessors} (SM) using the arguments in the kernel launch:
+\begin{minted}{c}
+// Replication in different SM
+helloworld<<<N, 1>>>();
+// Replication in different threads inside one SM
+helloworld<<<1, N>>>();
+\end{minted}
+\par
+Each kernel instance can be unequivocally identified, which can be used to make kernel instances cooperate. This can also be done at the threads level.
+\begin{minted}{c}
+__global__ void helloWorld(char* str) {
+    // Kernel instance level
+    int idx = blockIdx.x;
+    // Thread level
+    int idx = threadIdx.x;
+    
+    str[idx] += idx;
+}
+\end{minted}
+\subsection{Indexing vectors with blocks and threads}
+\par
+Consider indexing an array with one element per thread and $M$ threads per block (e.g. 8). Then a unique index for each thread is given by \texttt{int index = threadIdx.x + blockIdx.x * M}.
+\subsubsection{Example: Vector addition}
+\par
+The sequential code for a vector addition would look like this:
+\begin{minted}{c}
+// Compute vector sum C = A + B
+void vecAdd(float* a, float* b, float* c, int N) {
+    for (int i = 0; i < N; i++)
+        c[i] = a[i] + b[i];
+}
+
+int main() {
+    float a[N], b[N], c[N];
+    // initialize a and b
+    vecAdd(a, b, c, N);
+    // display the results
+    return 0;
+}
+\end{minted}
+\par
+The code for the vector addition with kernel definition and invocation would look like this:
+\begin{minted}[breaklines]{c}
+// Each kernel invocation performs one pair-wise addition
+__global__ void vecAddKernel(float* a_d, float* b_d, float* c_d, int N) {
+    int i = threadIdx.x + blockDim.x * blockIdx.x;
+    c_d[i] = a_d[i] + b_d[i];
+}
+
+__host__ int vectAdd(float* a, float* b, float* c, int N) {
+    vecAddKernel<<<ceil(N / 256), 256>>>(a, b, c, N);
+}
+\end{minted}
+\par
+In the example above, the vectors are split in blocks of 256 threads and equally distributed among as many blocks as needed. This means that, if the vectors are of size 512, two SM will run blocks of 256 threads.
+\par
+The \texttt{\_\_global\_\_} function will be run on each of the threads, which will take care of just making the corresponding addition. The \texttt{\_\_host\_\_} function will be called on the host.
+\subsection{Function declarations in CUDA}
+\begin{itemize}
+    \item \texttt{\_\_device\_\_} functions are executed on the device and only callable from the device.
+    \item \texttt{\_\_global\_\_} functions (also called kernel functions) are executed on the device and are only callable from the host. They can only return void.
+    \item \texttt{\_\_host\_\_} functions are executed and callable only on the host.
+\end{itemize}
+\subsubsection{Example: vector addition (revisited)}
+\par
+What if \texttt{blockDim.x} does not divide by $N$?
+\begin{minted}[breaklines]{c}
+__global__ void vecAddKernel(float* a_d, float* b_d, float* c_d, int N) {
+    int i = threadIdx.x + blockDim.x * blockIdx.x;
+    if (i < n)
+        c_d[i] = a_d[i] + b_d[i];
+}
+\end{minted}
+\subsection{Identifying threads inside a grid}
+\par
+In general, the GPU offers a grid of threads, divided into thread blocks, and each block divided into threads. The grid of thread blocks can actually be partitioned into 1, 2, or 3 dimensions.
+\par
+Each thread uses indices (1D, 2D or 3D) to decide what to do and what data to work on (data decomposition). These indices are \texttt{blockIdx} and \texttt{threadIdx}, defined inside a grid with \texttt{gridDim} blocks, each with \texttt{blockDim} threads.
+\par
+This is, the CUDA grid will have dimensions \texttt{gridDim.x} times \texttt{gridDim.y}. Inside the grid, there will be thread blocks with \texttt{blockDim.x} times \texttt{blockDim.y} threads.
+\subsection{\texttt{dim3} datatype}
+\par
+Data type to define variables to hold block and grid dimensionalities.
+\begin{minted}[breaklines]{c}
+__host__ int vectAdd(float* a, float* b, float* c, int N) {
+    // Run ceil(N/256) blocks of 256 threads each
+    dim3 DimGrid(ceil(N/256), 1, 1);
+    dim3 DimBlock(256, 1, 1);
+    vecAddKernel<<<DimGrid, DimBlock>>>(a, b, c, N);
+}
+\end{minted}
+\subsection{Thread scheduling and execution}
+\par
+Threads in a block are divided in 32-thread warps (scheduling units in SM). For example, if 3 blocks assigned to an SM, each with 256 threads, how many warps are there in an SM?
+\begin{itemize}
+    \item Each block is divided into 256 (threads) / 32 (warp size) = 8 warps per block
+    \item There are 8 (warps per block) $\times$ 3 (blocks) = 24 warps in total.
+\end{itemize}
+\par
+At any point in time, only one of the 24 warps will be selected for instruction fetch and execution (multithreading).
+\section{Accessing (global) memory}
+\subsection{Partial view of the device memory}
+\par
+Device code can read and write thread registers and grid global memory.
+\par
+Host code can allocate data in grid global memory and transfer data between host and grid global memories.
+\subsection{Basic device memory management}
+Global memory contents are visible to all threads. Variables in grid global memory can be declared using \texttt{\_\_device\_\_} attribute. It is also dynamically allocatable using \texttt{cudaMalloc} and \texttt{cudaFree}.
+\begin{minted}{c}
+#define N 1000
+
+// declared outside function and kernel bodies.
+__device__ int A[N];
+
+__global__ kernel() {
+    int id = blockId.x * blockDim.x + threadId.x;
+    A[tid]++;
+}
+\end{minted}
+\begin{itemize}
+    \item \texttt{cudaMalloc} allocates an object in the device global memory. It takes two parameters, pointer to the allocated object and its size in bytes.
+    \item \texttt{cudaFree} frees an object from device global memory. It takes the pointer to the object as only parameter.
+\end{itemize}
+\subsubsection{Example: vector addition (host code)}
+\begin{minted}[breaklines]{c}
+int main() {
+    // Arrays in host memory
+    float a[N], b [N], c[N];
+    // Pointers to vectors dynamically allocated in global memory
+    float *dev_a, *dev_b, *dev_c;
+    
+    cudaMalloc(&dev_a, N * sizeof(float));
+    cudaMalloc(&dev_b, N * sizeof(float));
+    cudaMalloc(&dev_c, N * sizeof(float));
+    
+    // ...
+    
+    // kernel invocation
+    dim3 DimGrid(ceil(N/256, 1, 1);
+    dim3 DimBlock(256, 1, 1);
+    vecAddKernel<<<DimGrid,DimBlock>>>(dev_a, dev_b, dev_c, N);
+    
+    // ...
+    
+    // Free the memory allocated on device
+    cudaFree(dev_a);
+    cudaFree(dev_b);
+    cudaFree(dev_c);
+    
+    return 0;
+}
+\end{minted}
+\subsection{Basic device memory management (cont.)}
+\begin{itemize}
+    \item \texttt{cudaMemcpy)} is a synchronous function for data transfer. It blocks the CPU until it is complete and the copy does not begin until all preceding CUDA calls have completed. It requires 4 parameters: pointer to destinations, pointer to source, number of bytes to be copied and type of transfer.
+    \item \texttt{cudaMemcpyAsync} is the asynchronous version of the function, allowing the overlap of data transfer and computation. It also uses an additional \texttt{stream} parameter that, if not 0, can be used to synchronize.
+\end{itemize}
+\subsubsection{Vector addition (host code)}
+\begin{minted}[breaklines]{c}
+int main() {
+    // Arrays in host memory
+    float a[N], b [N], c[N];
+    // Pointers to vectors dynamically allocated in global memory
+    float *dev_a, *dev_b, *dev_c;
+    
+    cudaMalloc(&dev_a, N * sizeof(float));
+    cudaMalloc(&dev_b, N * sizeof(float));
+    cudaMalloc(&dev_c, N * sizeof(float));
+    
+    // Initialize a and b in host memory (as sequential)
+    
+    // Copy a and b from host to device memory
+    cudaMemcpy(dev_a, a, N * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_b, b, N * sizeof(float), cudaMemcpyHostToDevice);
+    
+    dim3 DimGrid(ceil(N/256), 1, 1);
+    dim3 DimBlock(256, 1, 1);
+    vecAddKernel<<<DimGrid,DimBlock>>>(dev_a, dev_b, dev_c, N);
+    
+    // Copy back c from device to host
+    cudaMemcpy(c, dev_c, N * sizeof(float), cudaMempcyDeviceToHost);
+    
+    // Display results
+    
+    // Free the memory allocated on device
+    cudaFree(dev_a);
+    cudaFree(dev_b);
+    cudaFree(dev_c);
+    
+    return 0;
+}
+\end{minted}
+\subsection{Sharing data between GPUs}
+\par
+There are three options to acomplish this.
+\begin{itemize}
+    \item One is to make copies explicitly from the host code.
+    \item Another option is the peer-to-peer memory access. This can be done with the direct copy from pointer on one device to pointer on another device, via the function \texttt{cudaMemcpyPeer(void* dst, int dstDevice, void* src, int srcDevice, size\_t count)}.
+    \item The last option is the zero-copy shared host array, allowing the direct access to host memory from the device (Not covered).
+\end{itemize}
+\section{Cooperating threads and shared memory}
+\subsection{Threads vs. blocks}
+\par
+Unlike blocks, threads have mechanisms to synchronize and communicate via memory. The synchronization can be achieved with the instruction \texttt{\_\_syncthreads()}, which forces all warps (i.e. threads in a block) to wait until they reach the same point.
+\subsection{A more complete view of the device memory}
+Each thread can:
+\begin{itemize}
+    \item R/W per-thread registers and local memory.
+    \item R/W per-block shared memory (100 times faster than global).
+    \item R/W per-grid global memory.
+    \item Read only per-grid constant and texture memories.
+\end{itemize}
+\par
+Host code can R/W global, constant and texture memories.
+\par
+Shared memory is shared and allocated within a block, used to share data among threads and is not visible to threads in other blocks. It is declared using \texttt{\_\_shared\_\_}.
+\begin{minted}{c}
+#define N 1000
+
+__global__ kernel() {
+    __shared__ int A[N];
+    int tid = threadId.x;
+    A[tid]++;
+}
+\end{minted}
+\subsubsection{Example: 1D stencil}
+\par
+Consider applying a stencil to a 1D array of elements. Each output element is the sum of input elements within a radius. Each thread processes one output element. Each input element is read $2 \times radius + 1$ times.
+\par
+Read \texttt{blockDim.x + 2 * radius} input elements from global memory to shared memory. Compute \texttt{blockDim.x} output elements. Write \texttt{blockDim.x} output elements to global memory.
 \vfill
 \hrule
 ~\\
